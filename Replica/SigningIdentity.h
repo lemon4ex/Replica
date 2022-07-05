@@ -11,8 +11,10 @@
 @class Provisioning;
 @interface SigningIdentity : NSObject
 @property (nonatomic, strong) NSString *commonName;
+@property (nonatomic, strong) NSString *sha1;
+@property (nonatomic, strong) NSString *md5;
+@property (nonatomic, strong) NSString *serial;
 @property (nonatomic, strong, readonly) NSData *certificateData;
-- (instancetype)initWithProvision:(Provisioning *)provision certificateData:(NSData *)certificateData;
-/* Return only valid keychains certificate from Keychains */
+- (instancetype)initWithCertificateData:(NSData *)certificateData;
 + (NSArray *)keychainsIdenities;
 @end

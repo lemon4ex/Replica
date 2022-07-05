@@ -54,20 +54,20 @@
 
 @property (weak) IBOutlet NSTextField *statusLabel;
 
-@property (nonatomic) NSMutableArray *provisioningArray;
-@property (nonatomic) NSMutableArray *keychainsIdentities;
+@property (nonatomic) NSMutableDictionary<NSString *, NSArray<Provisioning *> *> *provisioningMap;
+@property (nonatomic) NSMutableArray<SigningIdentity *> *keychainsIdentities;
 @property (nonatomic) NSMutableArray *inputPathList;
 @property (nonatomic) OutputInfo *outputInfo;
 @property (nonatomic) BOOL isProcessing;
 @property (nonatomic) NSFileManager *fileManager;
 
-@property (nonatomic) NSString *signingCertificate;
+@property (nonatomic) SigningIdentity *signingIdentity;
+@property (nonatomic) Provisioning *provisioningFile;
 @property (nonatomic) NSString *applicationID;
 @property (nonatomic) NSString *displayName;
 @property (nonatomic) NSString *shortVersion;
 @property (nonatomic) NSString *bundleVersion;
 @property (nonatomic) NSString *entitlementPlistFile;
-@property (nonatomic) Provisioning *provisioningFile;
 @property (nonatomic) NSArray *specificFiles;
 @property (nonatomic) NSArray *urlSchemes;
 @property (nonatomic) NSString *scriptFile;
@@ -102,37 +102,52 @@
 }
 
 - (void)loadProvisionAndIdentityList{
+    [_provisioningProfilesPopup removeAllItems];
+    [_codesigningCertsPopup removeAllItems];
+    
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @autoreleasepool {
             [self initProvisionAndIdentityList];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [_provisioningProfilesPopup removeAllItems];
-                [_codesigningCertsPopup removeAllItems];
-            });
+            
             NSDateFormatter *formatter = [[NSDateFormatter alloc]init];
             formatter.dateStyle = NSDateFormatterShortStyle;
             formatter.timeStyle = NSDateFormatterMediumStyle;
-            for (Provisioning *provision in _provisioningArray) {
-                dispatch_async(dispatch_get_main_queue(), ^{
+            
+            SigningIdentity *signingIdentity = [self.keychainsIdentities firstObject];
+            if (!signingIdentity) {
+                return;
+            }
+            NSArray *matchedProvisions = [self.provisioningMap objectForKey:signingIdentity.serial];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self.keychainsIdentities enumerateObjectsUsingBlock:^(SigningIdentity * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+                    [_codesigningCertsPopup addItemWithTitle:obj.commonName];
+                }];
+                
+                [matchedProvisions enumerateObjectsUsingBlock:^(Provisioning * _Nonnull provision, NSUInteger idx, BOOL * _Nonnull stop) {
                     [_provisioningProfilesPopup addItemWithTitle:[NSString stringWithFormat:@"%@ (%@)",provision.name,provision.teamID]];
                     NSString *createDate = [formatter stringFromDate:provision.creationDate];
                     NSString *expiredDate = [formatter stringFromDate:provision.expirationDate];
                     _provisioningProfilesPopup.lastItem.toolTip = [NSString stringWithFormat:@"%@\n\nTeam ID: %@\nCreated: %@\nExpires: %@\nStatus: %@",provision.name,provision.teamID,createDate,expiredDate,provision.status];
-                    [_codesigningCertsPopup addItemWithTitle:provision.signingIdentity.commonName];
-                });
-            }
+                }];
+            });
         }
     });
 }
 
 - (IBAction)onPopUpButtonSelect:(NSPopUpButton *)sender{
-    if ([sender isEqual:_provisioningProfilesPopup]) {
-        [_codesigningCertsPopup selectItemAtIndex:sender.indexOfSelectedItem];
-        return;
-    }
-    
     if ([sender isEqual:_codesigningCertsPopup]) {
-        [_provisioningProfilesPopup selectItemAtIndex:sender.indexOfSelectedItem];
+        SigningIdentity *signingIdentity = [self.keychainsIdentities objectAtIndex:sender.indexOfSelectedItem];
+        NSArray *provisions = [self.provisioningMap objectForKey:signingIdentity.serial];
+        [_provisioningProfilesPopup removeAllItems];
+        NSDateFormatter *formatter = [[NSDateFormatter alloc]init];
+        formatter.dateStyle = NSDateFormatterShortStyle;
+        formatter.timeStyle = NSDateFormatterMediumStyle;
+        [provisions enumerateObjectsUsingBlock:^(Provisioning * _Nonnull provision, NSUInteger idx, BOOL * _Nonnull stop) {
+            [_provisioningProfilesPopup addItemWithTitle:[NSString stringWithFormat:@"%@ (%@)",provision.name,provision.teamID]];
+            NSString *createDate = [formatter stringFromDate:provision.creationDate];
+            NSString *expiredDate = [formatter stringFromDate:provision.expirationDate];
+            _provisioningProfilesPopup.lastItem.toolTip = [NSString stringWithFormat:@"%@\n\nTeam ID: %@\nCreated: %@\nExpires: %@\nStatus: %@",provision.name,provision.teamID,createDate,expiredDate,provision.status];
+        }];
         return;
     }
 }
@@ -160,40 +175,38 @@
 }
 
 - (void)initProvisionAndIdentityList {
-    self.provisioningArray = [NSMutableArray array];
-    self.keychainsIdentities = [[SigningIdentity keychainsIdenities] mutableCopy];
+    self.keychainsIdentities = [NSMutableArray array];
+    self.provisioningMap = [NSMutableDictionary dictionary];
+    
+    NSArray *keychainsIdentities = [SigningIdentity keychainsIdenities];
     
     NSString *library = [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) firstObject];
-    
     NSString *mobileProvisioningFolder = [library stringByAppendingPathComponent:@"MobileDevice/Provisioning Profiles"];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *contents = [fm contentsOfDirectoryAtPath:mobileProvisioningFolder error:nil];
+    NSDirectoryEnumerator *dirEnum = [self.fileManager enumeratorAtPath:mobileProvisioningFolder];
     
-    for (NSString *name in contents) {
-        if ([name hasPrefix:@"."]) continue;
-        if ([name.pathExtension caseInsensitiveCompare:@"mobileprovision"] != NSOrderedSame) continue;
-        
-        NSString *path = [mobileProvisioningFolder stringByAppendingPathComponent:name];
-        Provisioning *provisioning = [[Provisioning alloc] initWithPath:path];
-        for (SigningIdentity *identity in provisioning.signingIdentities) {
-            BOOL matchInKeychains = NO;
-            for (SigningIdentity *keyhainsIdentity in self.keychainsIdentities) {
-                if ([identity.certificateData isEqualToData:keyhainsIdentity.certificateData]) {
-                    matchInKeychains = YES;
-                    provisioning.matchInKeychains = matchInKeychains;
-                    provisioning.signingIdentity = keyhainsIdentity;
-                    if ([provisioning.expirationDate timeIntervalSinceNow] > 0) {
-                        provisioning.status = @"Valid";
-                    } else {
-                        provisioning.status = @"Expired";
-                    }
-                    [self.provisioningArray addObject:provisioning];
-                    break;
-                }
-            }
+    NSMutableArray *provisionings = [NSMutableArray array];
+    NSString *fineName;
+    while ((fineName = [dirEnum nextObject]) != nil) {
+        if ([fineName.pathExtension containsString:@"provision"]) {
+            NSString *fullPath = [mobileProvisioningFolder stringByAppendingPathComponent:fineName];
+            Provisioning *provisioning = [[Provisioning alloc] initWithPath:fullPath];
+            [provisionings addObject:provisioning];
         }
     }
-    [self.provisioningArray sortUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"name" ascending:YES selector:@selector(caseInsensitiveCompare:)]]];
+    
+    for (SigningIdentity *keyhainsIdentity in keychainsIdentities) {
+        NSMutableArray *matchedProvisions = [NSMutableArray array];
+        [provisionings enumerateObjectsUsingBlock:^(Provisioning * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+            if ([obj containsSigningIdentity:keyhainsIdentity]) {
+                [matchedProvisions addObject:obj];
+            }
+        }];
+        [matchedProvisions sortUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"name" ascending:YES selector:@selector(caseInsensitiveCompare:)]]];
+        if (matchedProvisions.count) {
+            [self.keychainsIdentities addObject:keyhainsIdentity];
+            [self.provisioningMap setValue:matchedProvisions forKey:keyhainsIdentity.serial];
+        }
+    }
 }
 
 - (void)controlsEnabled:(BOOL)enabled{
@@ -236,7 +249,6 @@
 - (void)cleanup:(NSString *)tempFolder{
     NSLog(@"清理临时目录: %@",tempFolder);
     [_fileManager removeItemAtPath:tempFolder error:nil];
-//    [self controlsEnabled:YES];
 }
 
 - (IBAction)onRefreshCert:(id)sender {
@@ -315,8 +327,8 @@
     }
     
     if (_outputInfo.path.length) {
-        self.signingCertificate = self.codesigningCertsPopup.selectedItem.title;
-        if (!self.signingCertificate.length) {
+        self.signingIdentity = self.keychainsIdentities[self.codesigningCertsPopup.indexOfSelectedItem];
+        if (!self.signingIdentity) {
             [self setStatus:@"未选择可签名的证书"];
             return;
         }
@@ -326,8 +338,12 @@
         self.bundleVersion = [self.bundleVersionField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         self.entitlementPlistFile = [self.entitlementField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         self.provisioningFile = nil;
-        if (_provisioningArray.count) {
-            self.provisioningFile = [_provisioningArray objectAtIndex:self.provisioningProfilesPopup.indexOfSelectedItem];
+        if (self.keychainsIdentities.count) {
+            SigningIdentity *signingIdentity = [self.keychainsIdentities objectAtIndex:self.codesigningCertsPopup.indexOfSelectedItem];
+            NSArray *provisions = [self.provisioningMap objectForKey:signingIdentity.serial];
+            if (provisions.count) {
+                self.provisioningFile = [provisions objectAtIndex:self.provisioningProfilesPopup.indexOfSelectedItem];
+            }
         }
         self.specificFiles = nil;
         NSString *extraFile = [self.extraFileField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -595,7 +611,7 @@
                             [binary writeToFile:executablePath atomically:YES];
                         }
 
-                        BOOL success = [ShellExecute codesign:path certificate:self.signingCertificate entitlements:workingEntitlementsPlist beforeBlock:^BOOL(NSString *file, NSString *certificate, NSString *entitlements) {
+                        BOOL success = [ShellExecute codesign:path certificate:self.signingIdentity.sha1 entitlements:workingEntitlementsPlist beforeBlock:^BOOL(NSString *file, NSString *certificate, NSString *entitlements) {
                             [self setStatus:@"签名文件 %@",[file stringByReplacingOccurrencesOfString:payloadDirectory withString:@""]];
                             return YES;
                         } afterBlock:^BOOL(NSString *file, NSString *certificate, NSString *entitlements, RETaskOutput *taskOutput) {

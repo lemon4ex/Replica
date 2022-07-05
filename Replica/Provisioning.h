@@ -22,12 +22,11 @@
 @property (nonatomic, strong) NSArray *provisionedDevices;
 @property (nonatomic, strong) NSArray *developerCertificates;
 @property (nonatomic, strong) NSArray *signingIdentities;
-@property (nonatomic, strong) SigningIdentity *signingIdentity;
+@property (nonatomic, strong) NSDictionary *propertyList;
 
-@property (nonatomic, assign) BOOL matchInKeychains;
 @property (strong, nonatomic) NSString *status;
 
 - (instancetype)initWithPath:(NSString *)path;
-
 - (BOOL)isExpired;
+- (BOOL)containsSigningIdentity:(SigningIdentity *)signingIdentity;
 @end
