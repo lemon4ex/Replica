@@ -25,19 +25,15 @@
 }
 
 - (NSString *)dataToHexString:(NSData *)data {
-    Byte *bytes = (Byte *)[data bytes];
-    NSString *hexStr=@"";
-    for(int i=0;i<[data length];i++) {
-        NSString *newHexStr = [NSString stringWithFormat:@"%x",bytes[i]&0xff];///16进制数
-        if([newHexStr length]==1){
-            hexStr = [NSString stringWithFormat:@"%@0%@",hexStr,newHexStr];
-        }
-        else{
-            hexStr = [NSString stringWithFormat:@"%@%@",hexStr,newHexStr];
-        }
+    uint8_t *bytes = (uint8_t *)[data bytes];
+    NSMutableString *hexStr = [NSMutableString string];
+    for(int i = 0; i < [data length]; i++) {
+        uint8_t byte1 = bytes[i] >> 4;
+        uint8_t byte2 = bytes[i] & 0xf;
+        [hexStr appendFormat:@"%x",byte1];
+        [hexStr appendFormat:@"%x",byte2];
     }
-    hexStr = [hexStr uppercaseString];
-    return hexStr;
+    return [hexStr uppercaseString];
 }
 
 - (void)_loadCertData {
