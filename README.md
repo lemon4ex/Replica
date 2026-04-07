@@ -1,5 +1,7 @@
 ## Replica
 
+> 直接在右键菜单上增加重签名操作的神器 [iRightMenu Pro](https://rm.byteage.com/) 已经发布！
+
 Replica 是 macOS 上一款强大的 IPA 重签工具。
 
 自用工具，开发年代久远，代码有点乱，暂时没有重构计划，能用先用。
